@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { GrayboxScene } from '../scenes/GrayboxScene.js';
 import { AudioManager } from './AudioManager.js';
 import { CutsceneDirector } from './CutsceneDirector.js';
@@ -8,32 +9,53 @@ import { PauseMenu } from './PauseMenu.js';
 import { PlayerController } from './PlayerController.js';
 import { Renderer } from './Renderer.js';
 import { SceneManager } from './SceneManager.js';
+import type { GrayboxCharacterPreview } from './GrayboxCharacterPreview.js';
 
 const IS_DEV = import.meta.env.DEV;
 
-function createDevDemoKeyBinding(
+interface DevBindings {
+  dispose(): void;
+}
+
+function createDevKeyBindings(
   hasStarted: () => boolean,
   isPaused: () => boolean,
   isCutscenePlaying: () => boolean,
   cutscene: CutsceneDirector,
   camera: Renderer['camera'],
-): AbortController {
+  scene: THREE.Scene,
+): DevBindings {
   const abort = new AbortController();
+  let preview: GrayboxCharacterPreview | null = null;
   window.addEventListener('keydown', event => {
-    if (
-      event.code !== 'KeyC' ||
-      event.repeat ||
-      !hasStarted() ||
-      isPaused() ||
-      isCutscenePlaying()
-    ) return;
+    if (event.repeat || !hasStarted() || isPaused() || isCutscenePlaying()) return;
 
-    event.preventDefault();
-    void import('./GrayboxCutsceneDemo.js').then(({ playGrayboxCutsceneDemo }) => {
-      if (!isCutscenePlaying()) playGrayboxCutsceneDemo(cutscene, camera);
-    });
+    if (event.code === 'KeyC') {
+      event.preventDefault();
+      void import('./GrayboxCutsceneDemo.js').then(({ playGrayboxCutsceneDemo }) => {
+        if (!isCutscenePlaying()) playGrayboxCutsceneDemo(cutscene, camera);
+      });
+    } else if (event.code === 'KeyV') {
+      event.preventDefault();
+      void import('./GrayboxCharacterPreview.js').then(({ GrayboxCharacterPreview: Preview }) => {
+        if (!preview) preview = new Preview(scene);
+        else preview.toggle();
+      });
+    } else if (event.code === 'KeyN' && preview) {
+      event.preventDefault();
+      preview.next();
+    } else if (event.code === 'KeyB' && preview) {
+      event.preventDefault();
+      preview.previous();
+    }
   }, { signal: abort.signal });
-  return abort;
+  return {
+    dispose(): void {
+      abort.abort();
+      preview?.dispose();
+      preview = null;
+    },
+  };
 }
 
 /**
@@ -55,7 +77,7 @@ export class GameManager {
   private lastTime = performance.now();
   private started = false;
   private gameStarted = false;
-  private devDemoAbort: AbortController | null = null;
+  private devBindings: DevBindings | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -83,12 +105,13 @@ export class GameManager {
     this.configureStartOverlay();
     this.configurePauseMenu();
     if (IS_DEV) {
-      this.devDemoAbort = createDevDemoKeyBinding(
+      this.devBindings = createDevKeyBindings(
         () => this.gameStarted,
         () => this.pauseMenu.isPaused(),
         () => this.cutscene.isPlaying,
         this.cutscene,
         this.renderer.camera,
+        this.renderer.scene,
       );
     }
   }
@@ -105,12 +128,13 @@ export class GameManager {
   dispose(): void {
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
     this.cutscene.stop();
+    this.devBindings?.dispose();
+    this.devBindings = null;
     this.sceneManager.dispose();
     this.pauseMenu.dispose();
     this.player.dispose();
     this.input.dispose();
     this.renderer.dispose();
-    this.devDemoAbort?.abort();
   }
 
   private configureStartOverlay(): void {
