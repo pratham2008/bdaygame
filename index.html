@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anaaya's Birthday</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- Three.js renders into this canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div id="crosshair">+</div>
+      <div id="interaction-prompt" class="hidden">
+        <span id="prompt-key">E</span>
+        <span id="prompt-text">Interact</span>
+      </div>
+    </div>
+
+    <!-- Click-to-start overlay -->
+    <div id="start-overlay">
+      <div class="overlay-box">
+        <h1>A Birthday Game</h1>
+        <p>Click to begin</p>
+        <button id="start-btn">Start</button>
+        <div class="controls-hint">
+          <p>WASD — Move &nbsp;|&nbsp; Mouse — Look</p>
+          <p>F — Flashlight &nbsp;|&nbsp; E — Interact &nbsp;|&nbsp; ESC — Pause</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pause / Settings overlay -->
+    <div id="pause-overlay" class="hidden">
+      <div class="overlay-box">
+        <h2>Paused</h2>
+        <div class="settings-group">
+          <label for="sensitivity-slider">Mouse Sensitivity</label>
+          <input type="range" id="sensitivity-slider" min="1" max="100" value="50" />
+          <span id="sensitivity-value">50</span>
+        </div>
+        <div class="settings-group">
+          <label for="volume-slider">Master Volume</label>
+          <input type="range" id="volume-slider" min="0" max="100" value="80" />
+          <span id="volume-value">80</span>
+        </div>
+        <button id="resume-btn">Resume</button>
+      </div>
+    </div>
+
+    <!-- ── Cutscene / transition overlays ──────────────────────────────── -->
+
+    <!--
+      Fade overlay: covers the full screen during scene transitions.
+      Driven by CutsceneDirector via .active class and opacity CSS transition.
+      pointer-events:none so it never blocks clicks accidentally.
+    -->
+    <div id="fade-overlay"></div>
+
+    <!--
+      Subtitle bar: one line of dialogue at the bottom of the screen.
+      CutsceneDirector sets #subtitle-text and removes .hidden.
+    -->
+    <div id="subtitle-bar" class="hidden">
+      <p id="subtitle-text"></p>
+    </div>
+
+    <!--
+      Date stamp: shown during the Oct 25–30 countdown sequence.
+      CountdownScene sets #date-text and removes .hidden.
+    -->
+    <div id="date-stamp" class="hidden">
+      <span id="date-text"></span>
+    </div>
+
+    <!--
+      Letter overlay: full-screen scrollable DOM letter in the birthday room.
+      BirthdayRoomScene shows this instead of 3D canvas text.
+    -->
+    <div id="letter-overlay" class="hidden">
+      <div id="letter-box">
+        <div id="letter-body">
+          <p id="letter-text"><!-- filled by BirthdayRoomScene --></p>
+        </div>
+        <button id="letter-close-btn">Close letter</button>
+      </div>
+    </div>
+
+    <!--
+      End card: final full-screen title after the birthday room.
+      CutsceneDirector shows this at the very end of the game.
+    -->
+    <div id="endcard-overlay" class="hidden">
+      <div id="endcard-box">
+        <h1 id="endcard-title">For Lakshmi…</h1>
+        <p id="endcard-credits"></p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
