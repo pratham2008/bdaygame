@@ -1,5 +1,6 @@
 import { GrayboxScene } from '../scenes/GrayboxScene.js';
 import { AudioManager } from './AudioManager.js';
+import { CutsceneDirector } from './CutsceneDirector.js';
 import { Flashlight } from './Flashlight.js';
 import { InputManager } from './InputManager.js';
 import { InteractionSystem } from './InteractionSystem.js';
@@ -7,6 +8,33 @@ import { PauseMenu } from './PauseMenu.js';
 import { PlayerController } from './PlayerController.js';
 import { Renderer } from './Renderer.js';
 import { SceneManager } from './SceneManager.js';
+
+const IS_DEV = import.meta.env.DEV;
+
+function createDevDemoKeyBinding(
+  hasStarted: () => boolean,
+  isPaused: () => boolean,
+  isCutscenePlaying: () => boolean,
+  cutscene: CutsceneDirector,
+  camera: Renderer['camera'],
+): AbortController {
+  const abort = new AbortController();
+  window.addEventListener('keydown', event => {
+    if (
+      event.code !== 'KeyC' ||
+      event.repeat ||
+      !hasStarted() ||
+      isPaused() ||
+      isCutscenePlaying()
+    ) return;
+
+    event.preventDefault();
+    void import('./GrayboxCutsceneDemo.js').then(({ playGrayboxCutsceneDemo }) => {
+      if (!isCutscenePlaying()) playGrayboxCutsceneDemo(cutscene, camera);
+    });
+  }, { signal: abort.signal });
+  return abort;
+}
 
 /**
  * Long-lived game composition root. SceneManager owns replaceable world
@@ -21,10 +49,13 @@ export class GameManager {
   readonly pauseMenu: PauseMenu;
   readonly audio: AudioManager;
   readonly sceneManager: SceneManager;
+  readonly cutscene: CutsceneDirector;
 
   private animationFrame: number | null = null;
   private lastTime = performance.now();
   private started = false;
+  private gameStarted = false;
+  private devDemoAbort: AbortController | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -34,6 +65,13 @@ export class GameManager {
     this.interaction = new InteractionSystem(this.renderer.camera, [], this.input);
     this.pauseMenu = new PauseMenu();
     this.audio = new AudioManager(this.renderer.camera);
+    this.cutscene = new CutsceneDirector(
+      this.renderer.camera,
+      this.player,
+      this.interaction,
+      this.pauseMenu,
+      this.audio,
+    );
     this.sceneManager = new SceneManager(
       this.renderer.scene,
       this.player,
@@ -44,6 +82,15 @@ export class GameManager {
 
     this.configureStartOverlay();
     this.configurePauseMenu();
+    if (IS_DEV) {
+      this.devDemoAbort = createDevDemoKeyBinding(
+        () => this.gameStarted,
+        () => this.pauseMenu.isPaused(),
+        () => this.cutscene.isPlaying,
+        this.cutscene,
+        this.renderer.camera,
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -57,11 +104,13 @@ export class GameManager {
 
   dispose(): void {
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
+    this.cutscene.stop();
     this.sceneManager.dispose();
     this.pauseMenu.dispose();
     this.player.dispose();
     this.input.dispose();
     this.renderer.dispose();
+    this.devDemoAbort?.abort();
   }
 
   private configureStartOverlay(): void {
@@ -71,6 +120,7 @@ export class GameManager {
     startButton.addEventListener('click', () => {
       startOverlay.classList.add('hidden');
       this.pauseMenu.markGameStarted();
+      this.gameStarted = true;
       this.audio.setMasterVolume(this.pauseMenu.volume / 100);
 
       // init() creates its node graph synchronously before it returns its
@@ -100,12 +150,16 @@ export class GameManager {
 
     if (!this.pauseMenu.isPaused()) {
       this.player.update(dt);
-      this.flashlight.update();
-      this.interaction.update(this.player.isLocked);
+      if (!this.cutscene.isPlaying) {
+        this.flashlight.update();
+        this.interaction.update(this.player.isLocked);
+      }
+      this.cutscene.update(dt);
       this.sceneManager.update(dt);
       this.audio.update();
     }
 
     this.renderer.render();
   };
+
 }
