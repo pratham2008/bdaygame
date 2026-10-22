@@ -7,6 +7,12 @@ interface PositionalVoice {
   readonly position: THREE.Vector3;
 }
 
+/** A dev oscillator that can be stopped without affecting unrelated audio. */
+export interface TestToneHandle {
+  readonly active: boolean;
+  stop(): void;
+}
+
 /**
  * Small Web Audio wrapper for scene ambience and one-shot effects.
  * AudioContext creation is deliberately deferred until init(), which must run
@@ -143,11 +149,12 @@ export class AudioManager {
   }
 
   /** Dev-only audible proof that gesture activation and master gain work. */
-  playTestTone(frequency = 440, durationSec = 0.5): void {
-    if (!IS_DEV || !this.context || !this.masterGain) return;
+  playTestTone(frequency = 440, durationSec = 0.5): TestToneHandle | null {
+    if (!IS_DEV || !this.context || !this.masterGain) return null;
 
     const oscillator = this.context.createOscillator();
     const gain = this.context.createGain();
+    let active = true;
     oscillator.type = 'sine';
     oscillator.frequency.value = frequency;
     gain.gain.value = 0.12;
@@ -156,8 +163,17 @@ export class AudioManager {
     oscillator.start();
     oscillator.stop(this.context.currentTime + Math.max(0, durationSec));
     oscillator.onended = () => {
+      active = false;
       oscillator.disconnect();
       gain.disconnect();
+    };
+    return {
+      get active(): boolean { return active; },
+      stop(): void {
+        if (!active) return;
+        active = false;
+        try { oscillator.stop(); } catch { /* oscillator may already have stopped */ }
+      },
     };
   }
 

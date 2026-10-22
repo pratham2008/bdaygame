@@ -10,10 +10,13 @@ import { PlayerController } from './PlayerController.js';
 import { Renderer } from './Renderer.js';
 import { SceneManager } from './SceneManager.js';
 import type { GrayboxCharacterPreview } from './GrayboxCharacterPreview.js';
+import type { GrayboxHorrorEffectsDemo } from './GrayboxHorrorEffectsDemo.js';
 
 const IS_DEV = import.meta.env.DEV;
 
 interface DevBindings {
+  update(): void;
+  pause(): void;
   dispose(): void;
 }
 
@@ -24,9 +27,17 @@ function createDevKeyBindings(
   cutscene: CutsceneDirector,
   camera: Renderer['camera'],
   scene: THREE.Scene,
+  audio: AudioManager,
 ): DevBindings {
   const abort = new AbortController();
   let preview: GrayboxCharacterPreview | null = null;
+  let horrorDemo: GrayboxHorrorEffectsDemo | null = null;
+  let horrorDemoLoading = false;
+  const stopTestFootsteps = (reason: string): void => horrorDemo?.stopFootsteps(reason);
+  window.addEventListener('blur', () => stopTestFootsteps('window lost focus'), { signal: abort.signal });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopTestFootsteps('document hidden');
+  }, { signal: abort.signal });
   window.addEventListener('keydown', event => {
     if (event.repeat || !hasStarted() || isPaused() || isCutscenePlaying()) return;
 
@@ -47,13 +58,43 @@ function createDevKeyBindings(
     } else if (event.code === 'KeyB' && preview) {
       event.preventDefault();
       preview.previous();
+    } else if (event.code === 'KeyH') {
+      event.preventDefault();
+      if (horrorDemo) {
+        horrorDemo.dispose();
+        horrorDemo = null;
+      } else if (!horrorDemoLoading) {
+        horrorDemoLoading = true;
+        void import('./GrayboxHorrorEffectsDemo.js').then(({ GrayboxHorrorEffectsDemo: Demo }) => {
+          horrorDemo = new Demo(scene, camera, audio);
+        }).finally(() => {
+          horrorDemoLoading = false;
+        });
+      }
+    } else if (horrorDemo) {
+      if (event.code === 'Digit1') horrorDemo.triggerApparition();
+      else if (event.code === 'Digit2') horrorDemo.triggerFlicker();
+      else if (event.code === 'Digit3') horrorDemo.triggerMoveWhenNotLooking();
+      else if (event.code === 'Digit4') horrorDemo.triggerMirrorDesync();
+      else if (event.code === 'Digit5') horrorDemo.toggleFootsteps();
+      else if (event.code === 'KeyX') horrorDemo.cancelAll();
+      else return;
+      event.preventDefault();
     }
   }, { signal: abort.signal });
   return {
+    update(): void {
+      horrorDemo?.update();
+    },
+    pause(): void {
+      stopTestFootsteps('game paused');
+    },
     dispose(): void {
       abort.abort();
       preview?.dispose();
       preview = null;
+      horrorDemo?.dispose();
+      horrorDemo = null;
     },
   };
 }
@@ -112,6 +153,7 @@ export class GameManager {
         this.cutscene,
         this.renderer.camera,
         this.renderer.scene,
+        this.audio,
       );
     }
   }
@@ -159,7 +201,10 @@ export class GameManager {
   }
 
   private configurePauseMenu(): void {
-    this.pauseMenu.onPause = () => this.player.exitLock();
+    this.pauseMenu.onPause = () => {
+      this.player.exitLock();
+      this.devBindings?.pause();
+    };
     this.pauseMenu.onResume = () => this.player.requestLock();
   }
 
@@ -180,6 +225,7 @@ export class GameManager {
       }
       this.cutscene.update(dt);
       this.sceneManager.update(dt);
+      this.devBindings?.update();
       this.audio.update();
     }
 
