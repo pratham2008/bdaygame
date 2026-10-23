@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GrayboxScene } from '../scenes/GrayboxScene.js';
+import { PrologueScene } from '../scenes/PrologueScene.js';
 import { AudioManager } from './AudioManager.js';
 import { CutsceneDirector } from './CutsceneDirector.js';
 import { Flashlight } from './Flashlight.js';
@@ -119,6 +120,7 @@ export class GameManager {
   private started = false;
   private gameStarted = false;
   private devBindings: DevBindings | null = null;
+  private startPrologue: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
@@ -142,6 +144,11 @@ export class GameManager {
       this.flashlight,
     );
     this.sceneManager.register('graybox', () => new GrayboxScene());
+    this.sceneManager.register('prologue', () => new PrologueScene({
+      cutscene: this.cutscene,
+      onOpeningReady: start => { this.startPrologue = start; },
+      onOpeningComplete: () => this.player.requestLock(),
+    }));
 
     this.configureStartOverlay();
     this.configurePauseMenu();
@@ -162,7 +169,7 @@ export class GameManager {
     if (this.started) return;
     this.started = true;
 
-    await this.sceneManager.loadScene('graybox');
+    await this.sceneManager.loadScene('prologue');
     this.lastTime = performance.now();
     this.animationFrame = requestAnimationFrame(this.gameLoop);
   }
@@ -196,6 +203,12 @@ export class GameManager {
         console.warn('[AudioManager] Initialisation failed; continuing silently.', error);
       });
       this.audio.playTestTone(440, 0.5);
+      if (this.startPrologue) {
+        // Suppress intentional pointer-lock loss before requesting it. Browser
+        // pointer-lock changes are asynchronous; doing this in the opposite
+        // order can briefly auto-pause the opening cutscene.
+        this.startPrologue();
+      }
       this.player.requestLock();
     });
   }

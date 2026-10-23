@@ -18,6 +18,15 @@ export type CutsceneStep =
   | { type: 'callback'; fn: () => void }
   | { type: 'sfx'; url: string; position?: THREE.Vector3 };
 
+export interface CutsceneOptions {
+  /**
+   * Keep an already-held pointer lock while controls are frozen. This is useful
+   * for an opening cutscene that starts directly from a click gesture; normal
+   * cutscenes retain the original release-and-restore behaviour.
+   */
+  retainPointerLock?: boolean;
+}
+
 /**
  * Runs a small sequence of presentation and camera steps. It owns only the
  * cutscene DOM overlays and temporary camera transform; it never owns or
@@ -51,6 +60,7 @@ export class CutsceneDirector {
   private interactionWasEnabled = true;
   private hudWasHidden = false;
   private restorePointerLock = false;
+  private retainPointerLock = false;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -75,7 +85,7 @@ export class CutsceneDirector {
   }
 
   /** Start a sequence, cancelling any currently running sequence first. */
-  play(steps: CutsceneStep[], onComplete?: () => void): void {
+  play(steps: CutsceneStep[], onComplete?: () => void, options: CutsceneOptions = {}): void {
     if (this.active) this.stop();
 
     this.steps = steps;
@@ -88,6 +98,7 @@ export class CutsceneDirector {
     this.interactionWasEnabled = this.interaction.enabled;
     this.hudWasHidden = this.hud.classList.contains('hidden');
     this.restorePointerLock = this.player.isLocked;
+    this.retainPointerLock = options.retainPointerLock ?? false;
     this.cameraStartPosition.copy(this.camera.position);
     this.cameraStartQuaternion.copy(this.camera.quaternion);
 
@@ -95,7 +106,7 @@ export class CutsceneDirector {
     this.interaction.enabled = false;
     this.hud.classList.add('hidden');
     this.pauseMenu.suppressAutoLockPause();
-    this.player.exitLock();
+    if (!this.retainPointerLock) this.player.exitLock();
     window.addEventListener('keydown', this.blockEscape, true);
 
     this.beginCurrentStep();
@@ -219,6 +230,7 @@ export class CutsceneDirector {
     this.fadeOverlay.classList.remove('active');
     this.fadeOverlay.style.removeProperty('transition-duration');
     this.pauseMenu.restoreAutoLockPause();
+    this.retainPointerLock = false;
     window.removeEventListener('keydown', this.blockEscape, true);
 
     // Browsers may require a further click to grant this request. Keeping the
