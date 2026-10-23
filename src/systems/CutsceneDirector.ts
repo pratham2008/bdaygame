@@ -18,6 +18,23 @@ export type CutsceneStep =
   | { type: 'callback'; fn: () => void }
   | { type: 'sfx'; url: string; position?: THREE.Vector3 };
 
+export interface CutsceneFocus {
+  /** World-space composition point supplied by the scene. */
+  target: THREE.Vector3;
+  durationSec?: number;
+  easing?: 'linear' | 'smooth';
+  /** Keep the focused view when dialogue ends instead of restoring its start. */
+  keepFacingOnComplete?: boolean;
+  /**
+   * Pull a too-close camera back along its current line to the target. This
+   * moves only the presentation camera, never the player, and is useful for
+   * character shots that need enough room for a prop or silhouette.
+   */
+  minimumDistance?: number;
+  /** Duration of the smooth return from a temporary presentation position. */
+  returnDurationSec?: number;
+}
+
 export interface CutsceneOptions {
   /**
    * Keep an already-held pointer lock while controls are frozen. This is useful
@@ -25,6 +42,12 @@ export interface CutsceneOptions {
    * cutscenes retain the original release-and-restore behaviour.
    */
   retainPointerLock?: boolean;
+  /**
+   * Optional, scene-supplied focal point for dialogue. The director eases the
+   * existing camera toward it without moving the player. Focus is deliberately
+   * opt-in so terminals and environmental text keep the player's current view.
+   */
+  focus?: CutsceneFocus;
 }
 
 /**
@@ -61,6 +84,7 @@ export class CutsceneDirector {
   private hudWasHidden = false;
   private restorePointerLock = false;
   private retainPointerLock = false;
+  private keepFocusOnComplete = false;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -88,7 +112,6 @@ export class CutsceneDirector {
   play(steps: CutsceneStep[], onComplete?: () => void, options: CutsceneOptions = {}): void {
     if (this.active) this.stop();
 
-    this.steps = steps;
     this.stepIndex = 0;
     this.stepElapsed = 0;
     this.onComplete = onComplete;
@@ -99,8 +122,13 @@ export class CutsceneDirector {
     this.hudWasHidden = this.hud.classList.contains('hidden');
     this.restorePointerLock = this.player.isLocked;
     this.retainPointerLock = options.retainPointerLock ?? false;
+    this.keepFocusOnComplete = options.focus?.keepFacingOnComplete ?? Boolean(options.focus);
     this.cameraStartPosition.copy(this.camera.position);
     this.cameraStartQuaternion.copy(this.camera.quaternion);
+    const focusSteps = options.focus ? this.makeFocusSteps(options.focus) : undefined;
+    this.steps = focusSteps
+      ? [focusSteps.enter, ...steps, ...(focusSteps.exit ? [focusSteps.exit] : [])]
+      : steps;
 
     this.player.enabled = false;
     this.interaction.enabled = false;
@@ -215,14 +243,20 @@ export class CutsceneDirector {
     if (!this.active) return;
     const callback = this.onComplete;
     this.active = false;
-    this.restoreGameplayState();
+    this.restoreGameplayState(!this.keepFocusOnComplete);
     this.onComplete = undefined;
     callback?.();
   }
 
-  private restoreGameplayState(): void {
-    this.camera.position.copy(this.cameraStartPosition);
-    this.camera.quaternion.copy(this.cameraStartQuaternion);
+  private restoreGameplayState(restoreCamera = true): void {
+    if (restoreCamera) {
+      this.camera.position.copy(this.cameraStartPosition);
+      this.camera.quaternion.copy(this.cameraStartQuaternion);
+    } else {
+      // The director has retained a focused angle; the controller must adopt
+      // it before mouse-look resumes or its stale yaw/pitch will snap it away.
+      this.player.syncLookToCamera();
+    }
     this.player.enabled = this.playerWasEnabled;
     this.interaction.enabled = this.interactionWasEnabled;
     if (!this.hudWasHidden) this.hud.classList.remove('hidden');
@@ -231,11 +265,71 @@ export class CutsceneDirector {
     this.fadeOverlay.style.removeProperty('transition-duration');
     this.pauseMenu.restoreAutoLockPause();
     this.retainPointerLock = false;
+    this.keepFocusOnComplete = false;
     window.removeEventListener('keydown', this.blockEscape, true);
 
     // Browsers may require a further click to grant this request. Keeping the
     // request here preserves normal desktop behaviour where it is permitted.
     if (this.restorePointerLock) this.player.requestLock();
+  }
+
+  private makeFocusSteps(focus: CutsceneFocus): { enter: CutsceneStep; exit?: CutsceneStep } {
+    const presentationPosition = this.focusPresentationPosition(focus);
+    const enter: CutsceneStep = {
+      type: 'cameraAnim',
+      targetPos: presentationPosition,
+      targetQuat: this.lookAtQuaternion(presentationPosition, focus.target),
+      durationSec: Math.max(0, focus.durationSec ?? 0.45),
+      easing: focus.easing ?? 'smooth',
+    };
+    if (presentationPosition.distanceToSquared(this.cameraStartPosition) < 0.000001) return { enter };
+
+    return {
+      enter,
+      // Rejoin the player's actual eye position before input is restored. The
+      // final quaternion is recalculated from that eye, so mouse-look resumes
+      // toward the subject rather than jumping to a presentation-camera angle.
+      exit: {
+        type: 'cameraAnim',
+        targetPos: this.cameraStartPosition.clone(),
+        targetQuat: this.lookAtQuaternion(this.cameraStartPosition, focus.target),
+        durationSec: Math.max(0, focus.returnDurationSec ?? 0.32),
+        easing: focus.easing ?? 'smooth',
+      },
+    };
+  }
+
+  private focusPresentationPosition(focus: CutsceneFocus): THREE.Vector3 {
+    const presentationPosition = this.cameraStartPosition.clone();
+    const minimumDistance = focus.minimumDistance;
+    if (!minimumDistance || minimumDistance <= 0) return presentationPosition;
+
+    const relative = this.cameraStartPosition.clone().sub(focus.target);
+    const currentDistance = relative.length();
+    if (currentDistance >= minimumDistance) return presentationPosition;
+
+    // Preserve the player's eye height while moving straight away from the
+    // subject. The movement can never pass through the focused character.
+    const horizontal = new THREE.Vector3(relative.x, 0, relative.z);
+    if (horizontal.lengthSq() < 0.000001) {
+      const viewDirection = this.camera.getWorldDirection(new THREE.Vector3());
+      horizontal.set(-viewDirection.x, 0, -viewDirection.z);
+    }
+    if (horizontal.lengthSq() < 0.000001) return presentationPosition;
+
+    horizontal.normalize();
+    const verticalDistance = this.cameraStartPosition.y - focus.target.y;
+    const requiredHorizontalDistance = Math.sqrt(Math.max(0, minimumDistance ** 2 - verticalDistance ** 2));
+    presentationPosition.x = focus.target.x + horizontal.x * requiredHorizontalDistance;
+    presentationPosition.z = focus.target.z + horizontal.z * requiredHorizontalDistance;
+    return presentationPosition;
+  }
+
+  private lookAtQuaternion(position: THREE.Vector3, target: THREE.Vector3): THREE.Quaternion {
+    const targetQuaternion = new THREE.Quaternion();
+    const targetMatrix = new THREE.Matrix4().lookAt(position, target, this.camera.up);
+    targetQuaternion.setFromRotationMatrix(targetMatrix);
+    return targetQuaternion;
   }
 
   private setFade(direction: 'in' | 'out', durationSec: number): void {

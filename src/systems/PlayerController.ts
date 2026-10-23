@@ -80,6 +80,18 @@ export class PlayerController {
     this.camera.position.set(pos.x, EYE_HEIGHT, pos.z);
   }
 
+  /**
+   * Adopt a camera orientation that was set by a presentation system while
+   * movement was frozen. Keeping the controller's yaw/pitch in step prevents
+   * its next mouse-look update from snapping the view back to an old angle.
+   */
+  syncLookToCamera(): void {
+    const orientation = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+    this.yaw = orientation.y;
+    this.pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, orientation.x));
+    this.input.flushMouse();
+  }
+
   update(dt: number) {
     // Always flush mouse even when disabled — prevents delta accumulation.
     if (!this.isLocked || !this.enabled) {

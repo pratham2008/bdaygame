@@ -10,6 +10,8 @@ interface PrologueDependencies {
   readonly onOpeningReady: (start: () => void) => void;
   /** Called after the non-interactive opening so GameManager can request lock. */
   readonly onOpeningComplete: () => void;
+  /** Hands the story to the SceneManager-owned World 1 outpost. */
+  readonly onWorld1Requested: () => void;
 }
 
 type TelevisionState = 'news' | 'static' | 'after';
@@ -26,6 +28,7 @@ export class PrologueScene implements IScene {
   private readonly cutscene: CutsceneDirector;
   private readonly onOpeningReady: (start: () => void) => void;
   private readonly onOpeningComplete: () => void;
+  private readonly onWorld1Requested: () => void;
   private readonly group = new THREE.Group();
   private readonly interactables: THREE.Mesh[] = [];
   private readonly wallBoxes: Array<[number, number, number, number]> = [];
@@ -57,6 +60,7 @@ export class PrologueScene implements IScene {
     this.cutscene = dependencies.cutscene;
     this.onOpeningReady = dependencies.onOpeningReady;
     this.onOpeningComplete = dependencies.onOpeningComplete;
+    this.onWorld1Requested = dependencies.onWorld1Requested;
   }
 
   build(scene: THREE.Scene, _state: Readonly<GameState>): SceneResult {
@@ -336,11 +340,11 @@ export class PrologueScene implements IScene {
     this.addBox(0.7, 1.85, 0.12, 3.93, 1.0, -0.35, this.standard(0x3a292a, 0.92), true);
     this.addBox(0.95, 1.7, 0.05, 3.86, 1.5, -0.35, this.standard(0x101725, 0.3, 0.6), false);
 
-    // A closed bedroom door is the deliberate P5 transition placeholder.
+    // The door becomes the World 1 handoff after the visitor speaks.
     const door = this.addBox(1.2, 2.35, 0.08, 1.25, 1.18, 3.88, this.standard(0x382629, 0.9), true);
     door.userData.interactable = true;
-    door.userData.promptText = 'Listen at the door';
-    door.userData.onInteract = () => this.playTransitionPlaceholder();
+    door.userData.promptText = 'Open the door';
+    door.userData.onInteract = () => this.transitionToWorld1();
     this.interactables.push(door);
 
     this.tvSilhouette = this.makeSilhouette(new THREE.Vector3(-1.55, 0.72, -3.69), 0.57);
@@ -355,13 +359,16 @@ export class PrologueScene implements IScene {
     this.drawMonitor();
   }
 
-  private playTransitionPlaceholder(): void {
+  private transitionToWorld1(): void {
     if (!this.visitorRevealed || this.cutscene.isPlaying) return;
     this.sceneCutsceneActive = true;
     this.cutscene.play([
       { type: 'subtitle', text: 'The signal is pulling at the door.', durationSec: 1.8 },
-      { type: 'subtitle', text: 'World 1 awaits beyond this point. [P5 transition placeholder]', durationSec: 2.3 },
-    ], () => { this.sceneCutsceneActive = false; }, { retainPointerLock: true });
+      { type: 'subtitle', text: 'Somewhere beyond it, an alarm begins again.', durationSec: 2.3 },
+    ], () => {
+      this.sceneCutsceneActive = false;
+      if (!this.disposed) this.onWorld1Requested();
+    }, { retainPointerLock: true });
   }
 
   private makeSilhouette(position: THREE.Vector3, scale: number): THREE.Group {
