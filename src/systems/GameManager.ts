@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GrayboxScene } from '../scenes/GrayboxScene.js';
 import { PrologueScene } from '../scenes/PrologueScene.js';
 import { World1Scene } from '../scenes/World1Scene.js';
+import { World2Scene } from '../scenes/World2Scene.js';
 import { AudioManager } from './AudioManager.js';
 import { CutsceneDirector } from './CutsceneDirector.js';
 import { Flashlight } from './Flashlight.js';
@@ -156,6 +157,12 @@ export class GameManager {
       camera: this.renderer.camera,
       cutscene: this.cutscene,
       reloadOutpost: () => { void this.sceneManager.loadScene('world1'); },
+      onWorld2Requested: () => { void this.sceneManager.loadScene('world2'); },
+    }));
+    this.sceneManager.register('world2', () => new World2Scene({
+      audio: this.audio,
+      camera: this.renderer.camera,
+      cutscene: this.cutscene,
     }));
 
     this.configureStartOverlay();

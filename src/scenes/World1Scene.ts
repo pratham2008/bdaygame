@@ -11,6 +11,8 @@ interface World1Dependencies {
   readonly cutscene: CutsceneDirector;
   /** Rebuilds this scene through SceneManager after a completed iteration. */
   readonly reloadOutpost: () => void;
+  /** Advances from the cleared final pass into World 2. */
+  readonly onWorld2Requested: () => void;
 }
 
 const RADIO_CRACKLE_URL = '/audio/jail-radio.mp3';
@@ -29,6 +31,7 @@ export class World1Scene implements IScene {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly cutscene: CutsceneDirector;
   private readonly reloadOutpost: () => void;
+  private readonly onWorld2Requested: () => void;
   private readonly group = new THREE.Group();
   private readonly interactables: THREE.Mesh[] = [];
   private readonly wallBoxes: Array<[number, number, number, number]> = [];
@@ -58,6 +61,7 @@ export class World1Scene implements IScene {
     this.camera = dependencies.camera;
     this.cutscene = dependencies.cutscene;
     this.reloadOutpost = dependencies.reloadOutpost;
+    this.onWorld2Requested = dependencies.onWorld2Requested;
   }
 
   build(scene: THREE.Scene, state: Readonly<GameState>): SceneResult {
@@ -383,9 +387,14 @@ export class World1Scene implements IScene {
   private useTerminal(): void {
     if (this.cutscene.isPlaying || this.terminalBusy || this.disposed) return;
     if (this.loopCount >= 3) {
-      this.playDialogue([
-        { type: 'subtitle', text: 'The alarm has stopped. A route beyond the outpost is open. [World 2 transition point — P7]', durationSec: 4.2 },
-      ]);
+      this.sceneCutsceneActive = true;
+      this.cutscene.play([
+        { type: 'subtitle', text: 'The alarm has stopped. Rain is falling beyond the outpost gate.', durationSec: 3.2 },
+        { type: 'fade', direction: 'out', durationSec: 0.35 },
+      ], () => {
+        this.sceneCutsceneActive = false;
+        if (!this.disposed) this.onWorld2Requested();
+      }, { retainPointerLock: true });
       return;
     }
     if (!this.injuredClueFound || !this.variantClueFound) {
