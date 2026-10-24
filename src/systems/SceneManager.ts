@@ -12,6 +12,15 @@ import {
 
 export type SceneFactory = () => IScene;
 
+export interface SceneRegistrationOptions {
+  /**
+   * Resets only this scene's persistent debug-entry state immediately before
+   * its normal lifecycle begins. Omit it when build() already has a safe
+   * default entry state.
+   */
+  prepareDebugEntry?: (state: GameState) => void;
+}
+
 /**
  * Owns playable-scene lifecycle and the persistent game state.
  *
@@ -25,6 +34,7 @@ export class SceneManager {
   private readonly interaction: InteractionSystem;
   private readonly flashlight: Flashlight;
   private readonly sceneFactories = new Map<SceneName, SceneFactory>();
+  private readonly sceneRegistrations = new Map<SceneName, SceneRegistrationOptions>();
   private readonly state: GameState;
   private activeScene: IScene | null = null;
   private transition = Promise.resolve();
@@ -48,8 +58,14 @@ export class SceneManager {
     return this.state.currentScene;
   }
 
-  register(name: SceneName, factory: SceneFactory): void {
+  register(name: SceneName, factory: SceneFactory, options: SceneRegistrationOptions = {}): void {
     this.sceneFactories.set(name, factory);
+    this.sceneRegistrations.set(name, options);
+  }
+
+  /** Implemented scenes, in registration order, for development tooling. */
+  getRegisteredSceneNames(): readonly SceneName[] {
+    return [...this.sceneFactories.keys()];
   }
 
   /**
@@ -57,12 +73,28 @@ export class SceneManager {
    * disposing/building scenes over one another during future cutscenes.
    */
   loadScene(name: SceneName): Promise<void> {
+    return this.queueSceneLoad(name, false);
+  }
+
+  /**
+   * Development entry point. It still performs the regular replacement
+   * lifecycle; a registered scene may only reset its own documented entry
+   * state before build() runs.
+   */
+  loadDebugScene(name: SceneName): Promise<void> {
+    return this.queueSceneLoad(name, true);
+  }
+
+  private queueSceneLoad(name: SceneName, debugEntry: boolean): Promise<void> {
     const factory = this.sceneFactories.get(name);
     if (!factory) {
       return Promise.reject(new Error(`[SceneManager] No scene registered for "${name}".`));
     }
 
-    const nextTransition = this.transition.then(() => this.replaceScene(name, factory));
+    const nextTransition = this.transition.then(() => {
+      if (debugEntry) this.sceneRegistrations.get(name)?.prepareDebugEntry?.(this.state);
+      this.replaceScene(name, factory);
+    });
     // Keep the queue usable if a caller handles a failed transition.
     this.transition = nextTransition.catch(() => undefined);
     return nextTransition;

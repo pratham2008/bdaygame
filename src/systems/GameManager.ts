@@ -12,6 +12,7 @@ import { PauseMenu } from './PauseMenu.js';
 import { PlayerController } from './PlayerController.js';
 import { Renderer } from './Renderer.js';
 import { SceneManager } from './SceneManager.js';
+import type { SceneName } from '../scenes/types.js';
 import type { GrayboxCharacterPreview } from './GrayboxCharacterPreview.js';
 import type { GrayboxHorrorEffectsDemo } from './GrayboxHorrorEffectsDemo.js';
 
@@ -20,8 +21,19 @@ const IS_DEV = import.meta.env.DEV;
 interface DevBindings {
   update(): void;
   pause(): void;
+  reset(): void;
   dispose(): void;
 }
+
+interface DevelopmentOverlayOptions {
+  getSceneNames(): readonly SceneName[];
+  getCurrentScene(): SceneName;
+  onOpen(): void;
+  onClose(): void;
+  onLoad(scene: SceneName): Promise<void>;
+}
+
+type DevelopmentOverlayFactory = (options: DevelopmentOverlayOptions) => { dispose(): void };
 
 function createDevKeyBindings(
   hasStarted: () => boolean,
@@ -92,12 +104,15 @@ function createDevKeyBindings(
     pause(): void {
       stopTestFootsteps('game paused');
     },
-    dispose(): void {
-      abort.abort();
+    reset(): void {
       preview?.dispose();
       preview = null;
       horrorDemo?.dispose();
       horrorDemo = null;
+    },
+    dispose(): void {
+      abort.abort();
+      this.reset();
     },
   };
 }
@@ -121,7 +136,10 @@ export class GameManager {
   private lastTime = performance.now();
   private started = false;
   private gameStarted = false;
+  private disposed = false;
   private devBindings: DevBindings | null = null;
+  private developmentOverlay: { dispose(): void } | null = null;
+  private devTravelWasPaused = false;
   private startPrologue: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -158,7 +176,11 @@ export class GameManager {
       cutscene: this.cutscene,
       reloadOutpost: () => { void this.sceneManager.loadScene('world1'); },
       onWorld2Requested: () => { void this.sceneManager.loadScene('world2'); },
-    }));
+    }), {
+      // Direct development travel deliberately begins at the normal first
+      // outpost pass. It never advances story state to reach later passes.
+      prepareDebugEntry: state => { state.world1LoopCount = 0; },
+    });
     this.sceneManager.register('world2', () => new World2Scene({
       audio: this.audio,
       camera: this.renderer.camera,
@@ -190,8 +212,11 @@ export class GameManager {
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
     this.cutscene.stop();
+    this.developmentOverlay?.dispose();
+    this.developmentOverlay = null;
     this.devBindings?.dispose();
     this.devBindings = null;
     this.sceneManager.dispose();
@@ -234,6 +259,92 @@ export class GameManager {
       this.devBindings?.pause();
     };
     this.pauseMenu.onResume = () => this.player.requestLock();
+  }
+
+  /** Called only by the source-served development overlay module. */
+  installDevelopmentOverlay(create: DevelopmentOverlayFactory): void {
+    if (this.disposed) return;
+    this.developmentOverlay = create({
+      getSceneNames: () => this.sceneManager.getRegisteredSceneNames(),
+      getCurrentScene: () => this.sceneManager.currentScene,
+      onOpen: () => this.suspendForDevTravel(),
+      onClose: () => this.restoreAfterDevTravel(),
+      onLoad: (scene: SceneName) => this.loadDebugScene(scene),
+    });
+  }
+
+  /** Freeze player-facing systems while the dev overlay owns browser focus. */
+  private suspendForDevTravel(): void {
+    this.cutscene.stop();
+    this.clearTransientPresentation();
+    this.devTravelWasPaused = this.pauseMenu.isPaused();
+    this.player.enabled = false;
+    this.interaction.enabled = false;
+    this.pauseMenu.suppressAutoLockPause();
+    this.player.exitLock();
+  }
+
+  /** Restore the normal control path when the menu is dismissed without travel. */
+  private restoreAfterDevTravel(): void {
+    this.pauseMenu.restoreAutoLockPause();
+    if (this.devTravelWasPaused || !this.gameStarted) return;
+    this.player.enabled = true;
+    this.interaction.enabled = true;
+    document.getElementById('hud')?.classList.remove('hidden');
+    this.player.requestLock();
+  }
+
+  private async loadDebugScene(name: SceneName): Promise<void> {
+    this.beginDebugSession();
+    this.cutscene.stop();
+    this.clearTransientPresentation();
+    this.devBindings?.reset();
+    this.audio.stopAmbient(0);
+
+    // A direct scene load is an explicit development action: resume the
+    // engine first so the newly built scene is immediately playable.
+    if (this.pauseMenu.isPaused()) this.pauseMenu.resume();
+    let beginPrologue = false;
+    try {
+      await this.sceneManager.loadDebugScene(name);
+      beginPrologue = name === 'prologue';
+    } finally {
+      this.devTravelWasPaused = false;
+      this.pauseMenu.restoreAutoLockPause();
+      this.player.enabled = true;
+      this.interaction.enabled = true;
+      document.getElementById('hud')?.classList.remove('hidden');
+      this.player.requestLock();
+    }
+    // Preserve the normal Prologue entry: its scene registered this opening
+    // callback during build(), and it owns the control lock while it runs.
+    if (beginPrologue) this.startPrologue?.();
+  }
+
+  /** Make a direct load usable before the normal start-overlay flow runs. */
+  private beginDebugSession(): void {
+    if (this.gameStarted) return;
+    document.getElementById('start-overlay')?.classList.add('hidden');
+    this.pauseMenu.markGameStarted();
+    this.gameStarted = true;
+    this.audio.setMasterVolume(this.pauseMenu.volume / 100);
+    void this.audio.init().catch(error => {
+      console.warn('[GameManager] Debug audio initialisation failed; continuing silently.', error);
+    });
+  }
+
+  /** Remove presentation DOM that belongs to a scene or a cancelled cutscene. */
+  private clearTransientPresentation(): void {
+    const fade = document.getElementById('fade-overlay');
+    fade?.classList.remove('active');
+    fade?.style.removeProperty('transition-duration');
+    document.getElementById('subtitle-bar')?.classList.add('hidden');
+    const subtitle = document.getElementById('subtitle-text');
+    if (subtitle) subtitle.textContent = '';
+    for (const id of ['date-stamp', 'letter-overlay', 'endcard-overlay']) {
+      document.getElementById(id)?.classList.add('hidden');
+    }
+    document.getElementById('hud')?.classList.remove('hidden');
   }
 
   private gameLoop = (now: number): void => {
