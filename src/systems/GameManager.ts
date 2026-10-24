@@ -3,6 +3,7 @@ import { GrayboxScene } from '../scenes/GrayboxScene.js';
 import { PrologueScene } from '../scenes/PrologueScene.js';
 import { World1Scene } from '../scenes/World1Scene.js';
 import { World2Scene } from '../scenes/World2Scene.js';
+import { World3Scene } from '../scenes/World3Scene.js';
 import { AudioManager } from './AudioManager.js';
 import { CutsceneDirector } from './CutsceneDirector.js';
 import { Flashlight } from './Flashlight.js';
@@ -182,6 +183,12 @@ export class GameManager {
       prepareDebugEntry: state => { state.world1LoopCount = 0; },
     });
     this.sceneManager.register('world2', () => new World2Scene({
+      audio: this.audio,
+      camera: this.renderer.camera,
+      cutscene: this.cutscene,
+      onWorld3Requested: () => { void this.sceneManager.loadScene('world3'); },
+    }));
+    this.sceneManager.register('world3', () => new World3Scene({
       audio: this.audio,
       camera: this.renderer.camera,
       cutscene: this.cutscene,

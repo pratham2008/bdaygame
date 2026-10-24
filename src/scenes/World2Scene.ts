@@ -9,6 +9,7 @@ interface World2Dependencies {
   readonly audio: AudioManager;
   readonly camera: THREE.PerspectiveCamera;
   readonly cutscene: CutsceneDirector;
+  readonly onWorld3Requested: () => void;
 }
 
 const RAIN_AMBIENT_URL = '/audio/ambient-w2.mp3';
@@ -30,6 +31,7 @@ export class World2Scene implements IScene {
   private readonly audio: AudioManager;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly cutscene: CutsceneDirector;
+  private readonly onWorld3Requested: () => void;
   private readonly group = new THREE.Group();
   private readonly interactables: THREE.Mesh[] = [];
   private readonly wallBoxes: Array<[number, number, number, number]> = [];
@@ -63,6 +65,7 @@ export class World2Scene implements IScene {
     this.audio = dependencies.audio;
     this.camera = dependencies.camera;
     this.cutscene = dependencies.cutscene;
+    this.onWorld3Requested = dependencies.onWorld3Requested;
   }
 
   build(scene: THREE.Scene, _state: Readonly<GameState>): SceneResult {
@@ -508,10 +511,14 @@ export class World2Scene implements IScene {
       return;
     }
     this.world3HandoffAnnounced = true;
-    this.playDialogue([
-      { type: 'subtitle', text: 'A service lift waits beyond the shutter. Its destination is a house that should not be here.', durationSec: 3.65 },
-      { type: 'subtitle', text: '[World 3 handoff point — P8]', durationSec: 2.2 },
-    ]);
+    this.sceneCutsceneActive = true;
+    this.cutscene.play([
+      { type: 'subtitle', text: 'A service lift waits beyond the shutter. Its destination is a house that should not be here.', durationSec: 3.4 },
+      { type: 'fade', direction: 'out', durationSec: 0.32 },
+    ], () => {
+      this.sceneCutsceneActive = false;
+      if (!this.disposed) this.onWorld3Requested();
+    }, { retainPointerLock: true });
   }
 
   private triggerThreatSilhouette(): void {
